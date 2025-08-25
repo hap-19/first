@@ -8,7 +8,12 @@
 #define PIN_MOTOR_IN2 4
 #define PIN_MOTOR_PWM 5
 #define PIN_HEATER    6
+#define PIN_BTN_POWER 7
+#define PIN_BTN_SPEED 8
+#define PIN_BTN_HEAT  9
+=======
 #define PIN_BUTTON    7
+
 
 WebServer server(80);
 Preferences prefs;
@@ -18,10 +23,15 @@ int autoOffMinutes = 10;
 bool session = false;
 
 unsigned long lastAction = 0;
-const int SPEED_VALUES[4] = {0, 85, 170, 255};
+// Motor speed values: 100%, 75%, 50%, 25%
+const int SPEED_VALUES[4] = {255, 191, 128, 64};
 bool motorForward = true;
 int speedIndex = 0;
 bool heaterOn = false;
+unsigned long powerPressStart = 0;
+bool lastSpeedState = HIGH;
+bool lastHeaterState = HIGH;
+=
 
 void savePrefs() {
   prefs.putString("pass", adminPass);
@@ -35,39 +45,62 @@ void setMotor(bool forward, int idx) {
 }
 
 void goToSleep() {
-  setMotor(true, 0);
+
+  // stop all outputs before sleeping
+  digitalWrite(PIN_MOTOR_IN1, LOW);
+  digitalWrite(PIN_MOTOR_IN2, LOW);
+  analogWrite(PIN_MOTOR_PWM, 0);
   digitalWrite(PIN_HEATER, LOW);
-  esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_BUTTON, 0);
+  esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_BTN_POWER, 0);
+
   esp_deep_sleep_start();
 }
 
 String style() {
-  return F("<style>body{font-family:sans-serif;background:#e0f2f1;color:#004d40;}\n"
-           "input,button{padding:8px;margin:4px;border-radius:4px;border:1px solid #1abc9c;}\n"
-           "h1{color:#1abc9c;}\n"\
-           "</style>");
+
+  return F(
+      "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'><style>"
+      "body{margin:0;font-family:Arial,sans-serif;background:#1abc9c;color:#fff;display:flex;justify-content:center;align-items:flex-start;min-height:100vh;padding:20px;}"
+      ".card{background:rgba(255,255,255,0.2);padding:20px;border-radius:8px;width:100%;max-width:420px;box-shadow:0 2px 6px rgba(0,0,0,0.2);}" 
+      "h1{text-align:center;margin-top:0;}"
+      "form{margin-bottom:20px;}"
+      "label{font-weight:bold;display:block;margin-top:10px;}"
+      "input,button{width:100%;padding:10px;margin-top:8px;border:none;border-radius:4px;}"
+      "button{background:#00695c;color:#fff;font-weight:bold;}"
+      "</style></head><body><div class='card'>");
+}
+
+String footer() {
+  return F("</div></body></html>");
 }
 
 String loginPage() {
-  return style() + F("<h1>Login</h1><form method='POST' action='/login'>"
-                     "<input type='password' name='pass' placeholder='Password'><br>"
-                     "<button type='submit'>Masuk</button></form>");
+  return style() +
+         F("<h1>Login</h1><form method='POST' action='/login'>"
+           "<input type='password' name='pass' placeholder='Password'>"
+           "<button type='submit'>Masuk</button></form>") +
+         footer();
+
 }
 
 String controlPage() {
   String html = style();
   html += F("<h1>Massager</h1>");
-  html += "<p>Motor: <form method='POST' action='/motor'><button name='dir' value='f'>Forward</button><button name='dir' value='b'>Reverse</button><br>";
-  html += "<input type='number' name='spd' min='0' max='3' value='" + String(speedIndex) + "'>"
-          "<button type='submit'>Set Speed</button></form></p>";
-  html += "<p>Heater: <form method='POST' action='/heater'><button name='h' value='1'>ON</button><button name='h' value='0'>OFF</button></form></p>";
-  html += "<p>Auto Off (minutes):<form method='POST' action='/autooff'><input type='number' name='m' value='" + String(autoOffMinutes) + "'>";
-  html += "<button type='submit'>Save</button></form></p>";
-  html += "<p><form method='POST' action='/wifi'><input name='ssid' placeholder='SSID'><br><input name='pwd' placeholder='WiFi Password'><br><button type='submit'>Save WiFi</button></form></p>";
-  html += "<p><form method='POST' action='/changepass'><input type='password' name='np' placeholder='New Password'><br><button type='submit'>Change Password</button></form></p>";
-  html += "<p><form method='POST' enctype='multipart/form-data' action='/update'><input type='file' name='update'><button type='submit'>OTA Update</button></form></p>";
-  html += "<p><form method='POST' action='/logout'><button type='submit'>Logout</button></form></p>";
-  html += "<p><form method='POST' action='/poweroff'><button type='submit'>Power Off</button></form></p>";
+
+  html += F("<form method='POST' action='/motor'><label>Motor Direction</label><div style='display:flex;gap:10px;'><button name='dir' value='f'>Forward</button><button name='dir' value='b'>Reverse</button></div><label>Speed</label><input type='number' name='spd' min='0' max='3' value='");
+  html += String(speedIndex);
+  html += F("'><button type='submit'>Set</button></form>");
+  html += F("<form method='POST' action='/heater'><label>Heater</label><div style='display:flex;gap:10px;'><button name='h' value='1'>ON</button><button name='h' value='0'>OFF</button></div></form>");
+  html += F("<form method='POST' action='/autooff'><label>Auto Off (minutes)</label><input type='number' name='m' value='");
+  html += String(autoOffMinutes);
+  html += F("'><button type='submit'>Save</button></form>");
+  html += F("<form method='POST' action='/wifi'><label>WiFi SSID</label><input name='ssid' placeholder='SSID'><label>Password</label><input name='pwd' type='password' placeholder='WiFi Password'><button type='submit'>Save WiFi</button></form>");
+  html += F("<form method='POST' action='/changepass'><label>New Admin Password</label><input type='password' name='np' placeholder='New Password'><button type='submit'>Change Password</button></form>");
+  html += F("<form method='POST' enctype='multipart/form-data' action='/update'><label>OTA Update</label><input type='file' name='update'><button type='submit'>Upload</button></form>");
+  html += F("<form method='POST' action='/logout'><button type='submit'>Logout</button></form>");
+  html += F("<form method='POST' action='/poweroff'><button type='submit'>Power Off</button></form>");
+  html += footer();
+
   return html;
 }
 
@@ -169,7 +202,12 @@ void setup() {
   pinMode(PIN_MOTOR_IN2, OUTPUT);
   pinMode(PIN_MOTOR_PWM, OUTPUT);
   pinMode(PIN_HEATER, OUTPUT);
-  pinMode(PIN_BUTTON, INPUT_PULLUP);
+
+  pinMode(PIN_BTN_POWER, INPUT_PULLUP);
+  pinMode(PIN_BTN_SPEED, INPUT_PULLUP);
+  pinMode(PIN_BTN_HEAT, INPUT_PULLUP);
+
+
 
   prefs.begin("massager", false);
   adminPass = prefs.getString("pass", "admin");
@@ -202,17 +240,54 @@ void setup() {
   server.onNotFound(notFound);
 
   server.begin();
+
+  // start motor at full speed when powered on
+  setMotor(motorForward, speedIndex);
+
   lastAction = millis();
 }
 
 void loop() {
   server.handleClient();
+
+
+  // power button long press to sleep
+  if (digitalRead(PIN_BTN_POWER) == LOW) {
+    if (powerPressStart == 0) {
+      powerPressStart = millis();
+    } else if (millis() - powerPressStart > 3000) {
+      goToSleep();
+    }
+  } else {
+    powerPressStart = 0;
+  }
+
+  // cycle motor speed
+  bool sp = digitalRead(PIN_BTN_SPEED);
+  if (lastSpeedState == HIGH && sp == LOW) {
+    speedIndex = (speedIndex + 1) % 4;
+    setMotor(motorForward, speedIndex);
+    lastAction = millis();
+  }
+  lastSpeedState = sp;
+
+  // toggle heater
+  bool hb = digitalRead(PIN_BTN_HEAT);
+  if (lastHeaterState == HIGH && hb == LOW) {
+    heaterOn = !heaterOn;
+    digitalWrite(PIN_HEATER, heaterOn ? HIGH : LOW);
+    lastAction = millis();
+  }
+  lastHeaterState = hb;
+
+=======
   if (digitalRead(PIN_BUTTON) == LOW) {
     delay(50);
     if (digitalRead(PIN_BUTTON) == LOW) {
       goToSleep();
     }
   }
+
   if (millis() - lastAction > (unsigned long)autoOffMinutes * 60000UL) {
     goToSleep();
   }
