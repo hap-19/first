@@ -3,16 +3,14 @@
 #include <Update.h>
 #include <Preferences.h>
 
-// Pin definition for ESP32-C3 Super Mini (adjust as needed)
+
+// Pin definition for ESP32-C3 Super Mini (L298N tanpa ENA/ENB)
 #define PIN_MOTOR_IN1 3
 #define PIN_MOTOR_IN2 4
-#define PIN_MOTOR_PWM 5
-#define PIN_HEATER    6
-#define PIN_BTN_POWER 7
-#define PIN_BTN_SPEED 8
-#define PIN_BTN_HEAT  9
-=======
-#define PIN_BUTTON    7
+#define PIN_HEATER    5
+#define PIN_BTN_POWER 6
+#define PIN_BTN_SPEED 7
+#define PIN_BTN_HEAT  8
 
 
 WebServer server(80);
@@ -31,7 +29,7 @@ bool heaterOn = false;
 unsigned long powerPressStart = 0;
 bool lastSpeedState = HIGH;
 bool lastHeaterState = HIGH;
-=
+
 
 void savePrefs() {
   prefs.putString("pass", adminPass);
@@ -39,17 +37,21 @@ void savePrefs() {
 }
 
 void setMotor(bool forward, int idx) {
-  digitalWrite(PIN_MOTOR_IN1, forward ? HIGH : LOW);
-  digitalWrite(PIN_MOTOR_IN2, forward ? LOW : HIGH);
-  analogWrite(PIN_MOTOR_PWM, SPEED_VALUES[idx]);
+
+  int pwm = SPEED_VALUES[idx];
+  if (forward) {
+    analogWrite(PIN_MOTOR_IN1, pwm);
+    analogWrite(PIN_MOTOR_IN2, 0);
+  } else {
+    analogWrite(PIN_MOTOR_IN1, 0);
+    analogWrite(PIN_MOTOR_IN2, pwm);
+  }
 }
 
 void goToSleep() {
-
   // stop all outputs before sleeping
-  digitalWrite(PIN_MOTOR_IN1, LOW);
-  digitalWrite(PIN_MOTOR_IN2, LOW);
-  analogWrite(PIN_MOTOR_PWM, 0);
+  analogWrite(PIN_MOTOR_IN1, 0);
+  analogWrite(PIN_MOTOR_IN2, 0);
   digitalWrite(PIN_HEATER, LOW);
   esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_BTN_POWER, 0);
 
@@ -200,13 +202,12 @@ void notFound() {
 void setup() {
   pinMode(PIN_MOTOR_IN1, OUTPUT);
   pinMode(PIN_MOTOR_IN2, OUTPUT);
-  pinMode(PIN_MOTOR_PWM, OUTPUT);
+
   pinMode(PIN_HEATER, OUTPUT);
 
   pinMode(PIN_BTN_POWER, INPUT_PULLUP);
   pinMode(PIN_BTN_SPEED, INPUT_PULLUP);
   pinMode(PIN_BTN_HEAT, INPUT_PULLUP);
-
 
 
   prefs.begin("massager", false);
@@ -280,13 +281,6 @@ void loop() {
   }
   lastHeaterState = hb;
 
-=======
-  if (digitalRead(PIN_BUTTON) == LOW) {
-    delay(50);
-    if (digitalRead(PIN_BUTTON) == LOW) {
-      goToSleep();
-    }
-  }
 
   if (millis() - lastAction > (unsigned long)autoOffMinutes * 60000UL) {
     goToSleep();
