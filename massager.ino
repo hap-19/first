@@ -20,6 +20,10 @@ String adminPass = "admin";
 int autoOffMinutes = 10;
 bool session = false;
 
+
+String wifiSSID = "";
+String wifiPwd  = "";
+
 unsigned long lastAction = 0;
 // Motor speed values: 100%, 75%, 50%, 25%
 const int SPEED_VALUES[4] = {255, 191, 128, 64};
@@ -55,10 +59,14 @@ void goToSleep() {
   digitalWrite(PIN_HEATER, LOW);
   esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_BTN_POWER, 0);
 
+  Serial.println("Entering deep sleep");
+  Serial.flush();
+
   esp_deep_sleep_start();
 }
 
 String style() {
+
 
   return F(
       "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'><style>"
@@ -88,7 +96,6 @@ String loginPage() {
 String controlPage() {
   String html = style();
   html += F("<h1>Massager</h1>");
-
   html += F("<form method='POST' action='/motor'><label>Motor Direction</label><div style='display:flex;gap:10px;'><button name='dir' value='f'>Forward</button><button name='dir' value='b'>Reverse</button></div><label>Speed</label><input type='number' name='spd' min='0' max='3' value='");
   html += String(speedIndex);
   html += F("'><button type='submit'>Set</button></form>");
@@ -96,13 +103,16 @@ String controlPage() {
   html += F("<form method='POST' action='/autooff'><label>Auto Off (minutes)</label><input type='number' name='m' value='");
   html += String(autoOffMinutes);
   html += F("'><button type='submit'>Save</button></form>");
-  html += F("<form method='POST' action='/wifi'><label>WiFi SSID</label><input name='ssid' placeholder='SSID'><label>Password</label><input name='pwd' type='password' placeholder='WiFi Password'><button type='submit'>Save WiFi</button></form>");
+  html += F("<form method='POST' action='/wifi'><label>WiFi SSID</label><input name='ssid' value='");
+  html += wifiSSID;
+  html += F("' placeholder='SSID'><label>Password</label><input name='pwd' type='password' value='");
+  html += wifiPwd;
+  html += F("' placeholder='WiFi Password'><button type='submit'>Save WiFi</button></form>");
   html += F("<form method='POST' action='/changepass'><label>New Admin Password</label><input type='password' name='np' placeholder='New Password'><button type='submit'>Change Password</button></form>");
   html += F("<form method='POST' enctype='multipart/form-data' action='/update'><label>OTA Update</label><input type='file' name='update'><button type='submit'>Upload</button></form>");
   html += F("<form method='POST' action='/logout'><button type='submit'>Logout</button></form>");
   html += F("<form method='POST' action='/poweroff'><button type='submit'>Power Off</button></form>");
   html += footer();
-
   return html;
 }
 
@@ -120,8 +130,12 @@ void handleLogin() {
     server.sendHeader("Location", "/");
     server.send(302, "text/plain", "");
     lastAction = millis();
+
+    Serial.println("Login success");
   } else {
     server.send(403, "text/plain", "Wrong password");
+    Serial.println("Login failed");
+
   }
 }
 
@@ -129,12 +143,18 @@ void handleLogout() {
   session = false;
   server.sendHeader("Location", "/");
   server.send(302, "text/plain", "");
+
+  Serial.println("Logged out");
+
 }
 
 void handleChangePass() {
   if (server.arg("np").length() > 0) {
     adminPass = server.arg("np");
     savePrefs();
+
+    Serial.println("Admin password changed");
+
   }
   server.sendHeader("Location", "/");
   server.send(302, "text/plain", "");
@@ -145,6 +165,12 @@ void handleWifi() {
   String pwd = server.arg("pwd");
   prefs.putString("ssid", ssid);
   prefs.putString("pwd", pwd);
+
+  wifiSSID = ssid;
+  wifiPwd  = pwd;
+  Serial.print("WiFi saved: ");
+  Serial.println(wifiSSID);
+
   server.send(200, "text/plain", "WiFi saved, reboot to apply");
 }
 
@@ -158,6 +184,12 @@ void handleMotor() {
   server.sendHeader("Location", "/");
   server.send(302, "text/plain", "");
   lastAction = millis();
+
+  Serial.print("Motor ");
+  Serial.print(motorForward ? "forward" : "reverse");
+  Serial.print(" speed index ");
+  Serial.println(speedIndex);
+
 }
 
 void handleHeater() {
@@ -166,6 +198,9 @@ void handleHeater() {
   server.sendHeader("Location", "/");
   server.send(302, "text/plain", "");
   lastAction = millis();
+
+  Serial.println(heaterOn ? "Heater ON" : "Heater OFF");
+
 }
 
 void handleAutoOff() {
@@ -174,16 +209,27 @@ void handleAutoOff() {
   savePrefs();
   server.sendHeader("Location", "/");
   server.send(302, "text/plain", "");
+
+  Serial.print("Auto-off set to ");
+  Serial.print(autoOffMinutes);
+  Serial.println(" minutes");
+
 }
 
 void handleOTA() {
   HTTPUpload& upload = server.upload();
   if (upload.status == UPLOAD_FILE_START) {
+
+    Serial.println("OTA start");
+
     Update.begin();
   } else if (upload.status == UPLOAD_FILE_WRITE) {
     Update.write(upload.buf, upload.currentSize);
   } else if (upload.status == UPLOAD_FILE_END) {
     Update.end(true);
+
+    Serial.println("OTA end");
+
   }
   server.sendHeader("Location", "/");
   server.send(302, "text/plain", "");
@@ -191,6 +237,9 @@ void handleOTA() {
 
 void handlePowerOff() {
   server.send(200, "text/plain", "Going to sleep");
+
+  Serial.println("Power off via web");
+
   delay(100);
   goToSleep();
 }
@@ -200,9 +249,11 @@ void notFound() {
 }
 
 void setup() {
+
+  Serial.begin(115200);
+  Serial.println("Booting...");
   pinMode(PIN_MOTOR_IN1, OUTPUT);
   pinMode(PIN_MOTOR_IN2, OUTPUT);
-
   pinMode(PIN_HEATER, OUTPUT);
 
   pinMode(PIN_BTN_POWER, INPUT_PULLUP);
@@ -214,18 +265,31 @@ void setup() {
   adminPass = prefs.getString("pass", "admin");
   autoOffMinutes = prefs.getInt("autooff", 10);
 
-  String ssid = prefs.getString("ssid", "");
-  String pwd = prefs.getString("pwd", "");
 
-  if (ssid.length() > 0) {
-    WiFi.begin(ssid.c_str(), pwd.c_str());
+  wifiSSID = prefs.getString("ssid", "");
+  wifiPwd  = prefs.getString("pwd", "");
+
+  if (wifiSSID.length() > 0) {
+    Serial.print("Connecting to ");
+    Serial.println(wifiSSID);
+    WiFi.begin(wifiSSID.c_str(), wifiPwd.c_str());
     if (WiFi.waitForConnectResult() != WL_CONNECTED) {
+      Serial.println("WiFi connect failed, starting AP");
       WiFi.mode(WIFI_AP);
       WiFi.softAP("MassagerSetup");
+      Serial.print("AP IP: ");
+      Serial.println(WiFi.softAPIP());
+    } else {
+      Serial.print("WiFi connected, IP: ");
+      Serial.println(WiFi.localIP());
+
     }
   } else {
     WiFi.mode(WIFI_AP);
     WiFi.softAP("MassagerSetup");
+    Serial.print("AP IP: ");
+    Serial.println(WiFi.softAPIP());
+
   }
 
   server.on("/", HTTP_GET, handleRoot);
@@ -241,9 +305,9 @@ void setup() {
   server.onNotFound(notFound);
 
   server.begin();
-
   // start motor at full speed when powered on
   setMotor(motorForward, speedIndex);
+  Serial.println("Motor started at full speed");
 
   lastAction = millis();
 }
@@ -257,6 +321,9 @@ void loop() {
     if (powerPressStart == 0) {
       powerPressStart = millis();
     } else if (millis() - powerPressStart > 3000) {
+
+      Serial.println("Power button long press");
+
       goToSleep();
     }
   } else {
@@ -268,6 +335,9 @@ void loop() {
   if (lastSpeedState == HIGH && sp == LOW) {
     speedIndex = (speedIndex + 1) % 4;
     setMotor(motorForward, speedIndex);
+    Serial.print("Speed button -> index ");
+    Serial.println(speedIndex);
+
     lastAction = millis();
   }
   lastSpeedState = sp;
@@ -277,12 +347,15 @@ void loop() {
   if (lastHeaterState == HIGH && hb == LOW) {
     heaterOn = !heaterOn;
     digitalWrite(PIN_HEATER, heaterOn ? HIGH : LOW);
+    Serial.println(heaterOn ? "Heater ON" : "Heater OFF");
+
     lastAction = millis();
   }
   lastHeaterState = hb;
 
-
   if (millis() - lastAction > (unsigned long)autoOffMinutes * 60000UL) {
+    Serial.println("Auto-off timeout");
+
     goToSleep();
   }
 }
